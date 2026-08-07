@@ -35,51 +35,6 @@ def clean_object_id(series):
     )
 
 
-def drop_epoch_dates(df, date_col, label):
-    """Drop rows whose `date_col` falls in 1970 -- the classic sentinel for a
-    missing/unset timestamp (Mongo/JS `new Date(0)` or `Date(null)` both land
-    on 1970-01-01), not a real historical record. Applied right after each
-    raw pull, before anything downstream buckets rows by month.
-    """
-    if date_col not in df.columns:
-        return df
-    parsed = pd.to_datetime(df[date_col], errors="coerce", utc=True)
-    is_1970 = parsed.dt.year == 1970
-    n_dropped = int(is_1970.sum())
-    if n_dropped:
-        print(f"  dropping {n_dropped:,} {label} rows with a 1970 {date_col} (bad/missing timestamp)")
-    return df[~is_1970]
-
-
-# Restaurants to scrub from every snapshot, platform-wide: anything actually
-# listed in `demo_restaurants`, PLUS any restaurant whose name merely
-# contains "demo" or "test" in any casing (demo/Demo/DEMO, test/Test/TEST) --
-# catches internal QA/demo accounts that were never added to that
-# collection. Computed once in main() and threaded into every build_*
-# function below so all six snapshots apply the exact same exclusion list.
-NAME_EXCLUDE_PATTERN = "demo|test|onboarding|trial"
-
-
-def load_excluded_restaurant_ids():
-    demo_ids = set(clean_object_id(pd.Series(db["demo_restaurants"].distinct("_id"))))
-
-    restaurants = load("restaurants", fields={"_id": 1, "name": 1})
-    if restaurants.empty:
-        name_ids = set()
-    else:
-        name_flag = restaurants["name"].astype(str).str.contains(
-            NAME_EXCLUDE_PATTERN, case=False, na=False, regex=True
-        )
-        name_ids = set(clean_object_id(restaurants.loc[name_flag, "_id"]))
-
-    excluded = demo_ids | name_ids
-    print(
-        f"  excluding {len(excluded):,} restaurants "
-        f"({len(demo_ids):,} from demo_restaurants, {len(name_ids):,} by name match)"
-    )
-    return excluded
-
-
 # Same projection idea as the notebook's convo_fields, trimmed to what the
 # conversations/callers/simultaneous snapshots need. `phoneFrom` is needed
 # for new-vs-repeat callers (notebook 11.4).
@@ -94,9 +49,11 @@ convo_fields = {
 }
 
 
-def build_conversations(excluded_ids):
+def build_conversations():
     """Conversations section -> conversations_monthly.parquet,
     conversations_callers_monthly.parquet, conversations_simultaneous_monthly.parquet"""
+    demo_ids = set(clean_object_id(pd.Series(db["demo_restaurants"].distinct("_id"))))
+
     if config.DEV_LIMIT:
         # random representative sample -> includes recent (scored) rows,
         # not just the oldest DEV_LIMIT docs in insertion order
@@ -109,8 +66,7 @@ def build_conversations(excluded_ids):
     conv = pd.DataFrame(list(cursor))
     print(f"  pulled {len(conv):,} conversations")
 
-    conv = drop_epoch_dates(conv, "dateCreated", "conversations")
-    conv = conv[~conv["restaurantId"].astype(str).isin(excluded_ids)]
+    conv = conv[~conv["restaurantId"].astype(str).isin(demo_ids)]
     restaurants = load("restaurants", fields={"_id": 1, "name": 1})
 
     monthly = m_conv.build_monthly(conv, restaurants)
@@ -147,9 +103,11 @@ reservation_event_fields = {
 }
 
 
-def build_reservations(excluded_ids):
+def build_reservations():
     """Reservations/covers/cancellations/edits -> reservations_monthly.parquet
     and reservations_platform.parquet"""
+    demo_ids = set(clean_object_id(pd.Series(db["demo_restaurants"].distinct("_id"))))
+
     match = {"type": {"$in": ["ReservationConfirm", "ReservationCancel", "ReservationEdit"]}}
     if config.DEV_LIMIT:
         cursor = db["events"].aggregate(
@@ -165,8 +123,7 @@ def build_reservations(excluded_ids):
     events = pd.DataFrame(list(cursor))
     print(f"  pulled {len(events):,} reservation events")
 
-    events = drop_epoch_dates(events, "createdAt", "reservation events")
-    events = events[~events["businessId"].astype(str).isin(excluded_ids)]
+    events = events[~events["businessId"].astype(str).isin(demo_ids)]
     restaurants = load("restaurants", fields={"_id": 1, "name": 1})
 
     monthly = m_res.build_monthly(events, restaurants)
@@ -215,7 +172,7 @@ def _is_cents_field(field_name: str) -> bool:
     return bool(field_name) and "cent" in field_name.lower()
 
 
-def _pull_events(evtype, excluded_ids, extra_field=None):
+def _pull_events(evtype, demo_ids, extra_field=None):
     """Sample (or fully pull) one event type, projecting only what's needed."""
     fields = {"_id": 0, "businessId": 1, "createdAt": 1}
     if extra_field:
@@ -229,14 +186,15 @@ def _pull_events(evtype, excluded_ids, extra_field=None):
     else:
         cursor = db["events"].find(match, fields)
     out = pd.DataFrame(list(cursor))
-    out = drop_epoch_dates(out, "createdAt", evtype)
     if "businessId" in out.columns:
-        out = out[~out["businessId"].astype(str).isin(excluded_ids)]
+        out = out[~out["businessId"].astype(str).isin(demo_ids)]
     return out
 
 
-def build_takeout(excluded_ids):
+def build_takeout():
     """Takeout funnel -> takeout_monthly.parquet + takeout_hourly.parquet"""
+    demo_ids = set(clean_object_id(pd.Series(db["demo_restaurants"].distinct("_id"))))
+
     order_money_field = _detect_money_field("TakeoutOrderCreated", ORDER_MONEY_CANDIDATES)
     item_money_field = _detect_money_field("TakeoutOrderItemOrdered", ITEM_MONEY_CANDIDATES)
     print(f"  order money field: {order_money_field!r}, item money field: {item_money_field!r}")
@@ -246,9 +204,9 @@ def build_takeout(excluded_ids):
         _raw_values = [d.get(order_money_field) for d in _sample_docs]
         print(f"  sample raw {order_money_field!r} values: {_raw_values}")
 
-    carts = _pull_events("TakeoutCartCreated", excluded_ids)
-    orders = _pull_events("TakeoutOrderCreated", excluded_ids, order_money_field)
-    items = _pull_events("TakeoutOrderItemOrdered", excluded_ids, item_money_field)
+    carts = _pull_events("TakeoutCartCreated", demo_ids)
+    orders = _pull_events("TakeoutOrderCreated", demo_ids, order_money_field)
+    items = _pull_events("TakeoutOrderItemOrdered", demo_ids, item_money_field)
     print(f"  pulled {len(carts):,} carts, {len(orders):,} orders, {len(items):,} items")
 
     if order_money_field and order_money_field in orders.columns:
@@ -301,8 +259,10 @@ def _detect_lead_fields():
     return platform_field, size_field
 
 
-def build_leads(excluded_ids):
+def build_leads():
     """Leads captured -> leads_monthly.parquet + leads_platform.parquet"""
+    demo_ids = set(clean_object_id(pd.Series(db["demo_restaurants"].distinct("_id"))))
+
     platform_field, size_field = _detect_lead_fields()
     print(f"  lead platform field: {platform_field!r}, event-size field: {size_field!r}")
 
@@ -323,9 +283,8 @@ def build_leads(excluded_ids):
     leads = pd.DataFrame(list(cursor))
     print(f"  pulled {len(leads):,} leads")
 
-    leads = drop_epoch_dates(leads, "createdAt", "leads")
     if "businessId" in leads.columns:
-        leads = leads[~leads["businessId"].astype(str).isin(excluded_ids)]
+        leads = leads[~leads["businessId"].astype(str).isin(demo_ids)]
     if platform_field and platform_field in leads.columns:
         leads = leads.rename(columns={platform_field: "platform"})
     if size_field and size_field in leads.columns:
@@ -356,8 +315,10 @@ tags_convo_fields = {
 }
 
 
-def build_tags(excluded_ids):
+def build_tags():
     """Conversation tags -> tags_monthly.parquet + tags_by_channel.parquet"""
+    demo_ids = set(clean_object_id(pd.Series(db["demo_restaurants"].distinct("_id"))))
+
     if config.DEV_LIMIT:
         cursor = db["conversations"].aggregate(
             [{"$sample": {"size": config.DEV_LIMIT}}, {"$project": tags_convo_fields}],
@@ -368,8 +329,7 @@ def build_tags(excluded_ids):
     convo = pd.DataFrame(list(cursor))
     print(f"  pulled {len(convo):,} conversations for tags")
 
-    convo = drop_epoch_dates(convo, "dateCreated", "tags conversations")
-    convo = convo[~convo["restaurantId"].astype(str).isin(excluded_ids)]
+    convo = convo[~convo["restaurantId"].astype(str).isin(demo_ids)]
 
     tags_lookup_df = load("tags", fields={"_id": 1, "name": 1})
     tag_lookup = dict(zip(tags_lookup_df["_id"], tags_lookup_df["name"]))
@@ -400,7 +360,7 @@ transfer_event_fields = {"_id": 0, "type": 1, "reason": 1, "conversationId": 1}
 transfer_conv_lookup_fields = {"_id": 1, "restaurantId": 1, "dateCreated": 1}
 
 
-def build_transfers(excluded_ids):
+def build_transfers():
     """Unanswered-transfer rate -> transfers_monthly.parquet"""
     match = {"type": {"$in": TRANSFER_TYPES}}
     if config.DEV_LIMIT:
@@ -436,13 +396,6 @@ def build_transfers(excluded_ids):
     events["conversationId"] = events["conversationId"].astype(str)
     print(f"  pulled {len(conv_lookup):,} conversations for the transfer lookup")
 
-    conv_lookup = drop_epoch_dates(conv_lookup, "dateCreated", "transfer lookup conversations")
-
-    # No demo/test filtering existed here before -- drop excluded restaurants'
-    # conversations from the lookup so their transfer events can't join and
-    # get dropped by build_monthly's dropna(subset=["restaurantId"]).
-    conv_lookup = conv_lookup[~conv_lookup["restaurantId"].astype(str).isin(excluded_ids)]
-
     restaurants = load("restaurants", fields={"_id": 1, "name": 1})
 
     monthly = m_transfers.build_monthly(events, conv_lookup, restaurants)
@@ -453,20 +406,18 @@ def build_transfers(excluded_ids):
 
 def main():
     print("Connecting to MongoDB…")
-    print("Loading restaurant exclusion list (demo_restaurants + demo/test-named restaurants)…")
-    excluded_ids = load_excluded_restaurant_ids()
     print("Building conversations snapshot…")
-    build_conversations(excluded_ids)
+    build_conversations()
     print("Building reservations snapshot…")
-    build_reservations(excluded_ids)
+    build_reservations()
     print("Building takeout snapshot…")
-    build_takeout(excluded_ids)
+    build_takeout()
     print("Building leads snapshot…")
-    build_leads(excluded_ids)
+    build_leads()
     print("Building tags snapshot…")
-    build_tags(excluded_ids)
+    build_tags()
     print("Building transfers snapshot…")
-    build_transfers(excluded_ids)
+    build_transfers()
     print("Done.")
 
 

@@ -1,16 +1,17 @@
-"""
-How the app reads snapshots:
+"""How the app reads snapshots — with caching so it stays fast.
 
-The first load_snapshot("x") reads the parquet and remembers the results. Every later call in the session returns it instantly (given more recent database is given). Since streamlit reruns this whole app on every widget change, the cache is what make it 
-feel relatively instant. 
+@st.cache_data means: the first time load_snapshot("x") runs, Streamlit reads
+the parquet and remembers the result. Every later call in the session returns
+the remembered DataFrame instantly instead of re-reading the file. Since
+Streamlit re-runs this whole app top-to-bottom on every widget interaction,
+this cache is what makes the app feel instant.
 """
-
 import pandas as pd
 import streamlit as st
- 
+
 import config
- 
- 
+
+
 @st.cache_data
 def load_snapshot(name: str) -> pd.DataFrame:
     """Read data/<name>.parquet. Returns an empty frame if it doesn't exist yet."""

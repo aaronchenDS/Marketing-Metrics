@@ -492,9 +492,9 @@ else:
     st.subheader("Estimated monthly value supported per restaurant")
     st.metric(
         "Labor value (from call volume)",
-        f"${baseline['estimated_labor_value_low']:,.2f} – ${baseline['estimated_labor_value_high']:,.2f}",
+        f"\\${baseline['estimated_labor_value_low']:,.2f} – \\${baseline['estimated_labor_value_high']:,.2f}",
     )
     st.metric(
         "Revenue supported (from covers)",
-        f"${baseline['estimated_revenue_supported_low']:,.2f} – ${baseline['estimated_revenue_supported_high']:,.2f}",
+        f"\\${baseline['estimated_revenue_supported_low']:,.2f} – \\${baseline['estimated_revenue_supported_high']:,.2f}",
     )
