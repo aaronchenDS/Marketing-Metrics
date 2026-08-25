@@ -146,12 +146,12 @@ def platform_kpis(view: pd.DataFrame) -> dict:
     duration_n = view["duration_n"].sum()
     score_n = view["score_n"].sum()
     return {
-        "conversations": conversations,
-        "active_restaurants": int(view["restaurantId"].nunique()),
-        "total_time_hours": view["duration_sum"].sum() / 3600,
-        "avg_duration_s": view["duration_sum"].sum() / duration_n if duration_n else float("nan"),
-        "sent_to_host_rate": view["sent_to_host_n"].sum() / conversations if conversations else float("nan"),
-        "avg_score": view["score_sum"].sum() / score_n if score_n else float("nan"),
+        "Conversations": conversations,
+        "Active Restaurants": int(view["restaurantId"].nunique()),
+        "Total Time in Hours": view["duration_sum"].sum() / 3600,
+        "Average Duration in Seconds": view["duration_sum"].sum() / duration_n if duration_n else float("nan"),
+        "Sent to Host Rate": f"{sent_to_host_rate:.1%}",
+        "Average Score": view["score_sum"].sum() / score_n if score_n else float("nan"),
     }
 
 
