@@ -145,6 +145,10 @@ def platform_kpis(view: pd.DataFrame) -> dict:
     conversations = int(view["conversations"].sum())
     duration_n = view["duration_n"].sum()
     score_n = view["score_n"].sum()
+    sent_to_host_n = view["sent_to_host_n"].sum()
+    conversations_total = view["conversations"].sum()
+    sent_to_host_rate = sent_to_host_n / conversations_total if conversations_total else float("nan")
+    
     return {
         "Conversations": conversations,
         "Active Restaurants": int(view["restaurantId"].nunique()),
