@@ -47,7 +47,7 @@ if monthly.empty:
 
 # --- Sidebar: the interactive controls ------------------------------------
 st.sidebar.header("Filters")
-months = sorted(m for m in monthly["year_month"].dropna().unique())
+months = sorted(m for m in monthly["year_month"].dropna().unique() if m >= "2025-01")
 
 if len(months) > 1:
     lo, hi = st.sidebar.select_slider(
@@ -55,6 +55,7 @@ if len(months) > 1:
     )
 else:
     lo, hi = months[0], months[0]
+
 
 top_n = st.sidebar.slider("Top N restaurants", 5, 25, 10)
 min_conv = st.sidebar.number_input(
