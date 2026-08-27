@@ -69,14 +69,19 @@ rank_metric = st.sidebar.selectbox(
 view = monthly[(monthly["year_month"] >= lo) & (monthly["year_month"] <= hi)]
 
 # --- KPI row ---------------------------------------------------------------
-k = m_conv.platform_kpis(view)
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric("Total conversations", f"{k['conversations']:,}")
-c2.metric("Active restaurants", f"{k['active_restaurants']:,}")
-c3.metric("Avg call duration", f"{k['avg_duration_s']:.0f}s")
-c4.metric("Total time spent", f"{k['total_time_hours']:,.0f}h")
-c5.metric("Sent-to-host rate", f"{k['sent_to_host_rate']:.1%}")
-c6.metric("Avg conversation score", f"{k['avg_score']:.2f}")
+def platform_kpis(view: pd.DataFrame) -> dict:
+    """Headline numbers for the selected slice, correctly weighted."""
+    conversations = int(view["conversations"].sum())
+    duration_n = view["duration_n"].sum()
+    score_n = view["score_n"].sum()
+    return {
+        "conversations": conversations,
+        "active_restaurants": int(view["restaurantId"].nunique()),
+        "total_time_hours": view["duration_sum"].sum() / 3600,
+        "avg_duration_s": view["duration_sum"].sum() / duration_n if duration_n else float("nan"),
+        "sent_to_host_rate": view["sent_to_host_n"].sum() / conversations if conversations else float("nan"),
+        "avg_score": view["score_sum"].sum() / score_n if score_n else float("nan"),
+    }
 
 # --- Trend -----------------------------------------------------------------
 st.subheader("Conversations by month")
