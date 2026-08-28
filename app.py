@@ -83,6 +83,7 @@ def platform_kpis(view: pd.DataFrame) -> dict:
         "avg_score": view["score_sum"].sum() / score_n if score_n else float("nan"),
     }
 
+k = platform_kpis(view)   
 # --- Trend -----------------------------------------------------------------
 st.subheader("Conversations by month")
 trend = m_conv.monthly_totals(view)
